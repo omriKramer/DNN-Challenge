@@ -6,6 +6,25 @@ import pandas as pd
 from torch.utils.data.dataset import Dataset
 
 
+def split_by_individuals(cgm_file, meals_file, ratio=0.8):
+    cgm_df = pd.read_csv(cgm_file, parse_dates=['Date'])
+    meals_df = pd.read_csv(meals_file, parse_dates=['Date'])
+    cgm_df = filter_no_meals_data(cgm_df, meals_df)
+
+    individuals = cgm_df['id'].unique()
+    num_indiv = int(len(individuals) * ratio)
+    train_indiv = individuals[:num_indiv]
+    val_indiv = individuals[num_indiv:]
+
+    cgm_train = cgm_df[cgm_df['id'].isin(train_indiv)]
+    meals_train = meals_df[meals_df['id'].isin(train_indiv)]
+
+    cgm_val = cgm_df[cgm_df['id'].isin(val_indiv)]
+    meals_val = meals_df[meals_df['id'].isin(val_indiv)]
+
+    return (cgm_train, meals_train), (cgm_val, meals_val)
+
+
 def filter_no_meals_data(cgm_df, meals_df):
     removal_patients = np.setdiff1d(cgm_df['id'].unique(), meals_df['id'].unique(), assume_unique=True)
     cgm_df = cgm_df[~cgm_df['id'].isin(removal_patients)]
@@ -20,13 +39,13 @@ def cumsum_with_restarts(series, reset):
 
 class GlucoseData(Dataset):
 
-    def __init__(self, cgm_file, meals_file, cgm_transform=None, meals_transform=None, target_transform=None):
+    def __init__(self, cgm_df, meals_df, cgm_transform=None, meals_transform=None, target_transform=None):
         self.target_transform = target_transform
         self.meals_transform = meals_transform
         self.cgm_transform = cgm_transform
 
-        self.cgm_df = pd.read_csv(cgm_file, parse_dates=['Date'])
-        self.meals_df = pd.read_csv(meals_file, parse_dates=['Date'])
+        self.cgm_df = cgm_df
+        self.meals_df = meals_df
 
         self.cgm_df = filter_no_meals_data(self.cgm_df, self.meals_df)
         indices = []
@@ -47,6 +66,20 @@ class GlucoseData(Dataset):
             indices.append(eligible.to_list())
 
         self.indices = list(itertools.chain.from_iterable(indices))
+
+    @classmethod
+    def from_files(cls, cgm_file, meals_file, **kwargs):
+        cgm_df = pd.read_csv(cgm_file, parse_dates=['Date'])
+        meals_df = pd.read_csv(meals_file, parse_dates=['Date'])
+        glucose_data = cls(cgm_df, meals_df, **kwargs)
+        return glucose_data
+
+    @classmethod
+    def train_val_split(cls, cgm_file, meals_file, **kwargs):
+        (cgm_train, meals_train), (cgm_val, meals_val) = split_by_individuals(cgm_file, meals_file)
+        train = cls(cgm_train, meals_train, **kwargs)
+        val = cls(cgm_val, meals_val, **kwargs)
+        return train, val
 
     def __len__(self):
         return len(self.indices)
