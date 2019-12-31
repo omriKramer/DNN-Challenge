@@ -39,10 +39,8 @@ def cumsum_with_restarts(series, reset):
 
 class GlucoseData(Dataset):
 
-    def __init__(self, cgm_df, meals_df, cgm_transform=None, meals_transform=None, target_transform=None):
-        self.target_transform = target_transform
-        self.meals_transform = meals_transform
-        self.cgm_transform = cgm_transform
+    def __init__(self, cgm_df, meals_df, transform):
+        self.transform = transform
 
         self.cgm_df = cgm_df
         self.meals_df = meals_df
@@ -106,12 +104,8 @@ class GlucoseData(Dataset):
         )
         meals = self.meals_df[meals_mask]
 
-        if self.cgm_transform:
-            cgm = self.cgm_transform(cgm)
-        if self.meals_transform:
-            meals = self.meals_transform(meals)
-        if self.target_transform:
-            target = self.target_transform(target)
-
         sample = {'cgm': cgm, 'meals': meals, 'target': target}
+        if self.transform:
+            sample = self.transform(sample)
+
         return sample
