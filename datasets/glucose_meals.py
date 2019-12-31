@@ -39,7 +39,7 @@ def cumsum_with_restarts(series, reset):
 
 class GlucoseData(Dataset):
 
-    def __init__(self, cgm_df, meals_df, transform):
+    def __init__(self, cgm_df, meals_df, transform=None):
         self.transform = transform
 
         self.cgm_df = cgm_df
@@ -51,12 +51,12 @@ class GlucoseData(Dataset):
             individual_cgm = individual_cgm.copy()
             individual_cgm['past_diff'] = individual_cgm['Date'].diff().dt.seconds / 60
             gaps = individual_cgm['past_diff'] > 15
-            individual_cgm['past_diff'][gaps] = 0
+            individual_cgm.loc[gaps, 'past_diff'] = 0
             individual_cgm['past_info'] = cumsum_with_restarts(individual_cgm['past_diff'], gaps)
 
             individual_cgm['future_diff'] = (individual_cgm['Date'].diff(-1) * -1).dt.seconds / 60
             gaps = individual_cgm['future_diff'] > 15
-            individual_cgm['future_diff'][gaps] = 0
+            individual_cgm.loc[gaps, 'future_diff'] = 0
             individual_cgm['future_info'] = cumsum_with_restarts(individual_cgm['future_diff'][::-1], gaps[::-1])
 
             mask = (individual_cgm['past_info'] >= 12 * 4 * 15) & (individual_cgm['future_info'] >= 2 * 4 * 15)
