@@ -46,20 +46,21 @@ class GlucoseData(Dataset):
         self.meals_df = meals_df
 
         self.cgm_df = filter_no_meals_data(self.cgm_df, self.meals_df)
+        self.meals_df['meal_type'] = self.meals_df['meal_type'].astype('category')
+
         indices = []
         for i, individual_cgm in self.cgm_df.groupby('id'):
-            individual_cgm = individual_cgm.copy()
-            individual_cgm['past_diff'] = individual_cgm['Date'].diff().dt.seconds / 60
-            gaps = individual_cgm['past_diff'] > 15
-            individual_cgm.loc[gaps, 'past_diff'] = 0
-            individual_cgm['past_info'] = cumsum_with_restarts(individual_cgm['past_diff'], gaps)
+            past_diff = individual_cgm['Date'].diff().dt.seconds / 60
+            gaps = past_diff > 15
+            past_diff[gaps] = 0
+            past_info = cumsum_with_restarts(past_diff, gaps)
 
-            individual_cgm['future_diff'] = (individual_cgm['Date'].diff(-1) * -1).dt.seconds / 60
-            gaps = individual_cgm['future_diff'] > 15
-            individual_cgm.loc[gaps, 'future_diff'] = 0
-            individual_cgm['future_info'] = cumsum_with_restarts(individual_cgm['future_diff'][::-1], gaps[::-1])
+            future_diff = (individual_cgm['Date'].diff(-1) * -1).dt.seconds / 60
+            gaps = future_diff > 15
+            future_diff[gaps] = 0
+            future_info = cumsum_with_restarts(future_diff[::-1], gaps[::-1])[::-1]
 
-            mask = (individual_cgm['past_info'] >= 12 * 4 * 15) & (individual_cgm['future_info'] >= 2 * 4 * 15)
+            mask = (past_info >= 12 * 4 * 15) & (future_info >= 2 * 4 * 15)
             eligible = individual_cgm.index[mask]
             indices.append(eligible.to_list())
 

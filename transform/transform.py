@@ -22,3 +22,27 @@ def combine_cgm_meals(sample):
     target = torch.tensor(target, dtype=torch.float64)
     sample = {'input_tens': input_tens, 'target': target}
     return sample
+
+
+def normalize_time(series):
+    # 1440 minutes in a day
+    normalized = (series.dt.hour * 60 + series.dt.minute) / 1440
+    return normalized
+
+
+def to_tensor(sample):
+    cgm = sample['cgm'].copy()
+    meals = sample['meals'].copy()
+
+    cgm['Date'] = normalize_time(cgm['Date'])
+    meals['Date'] = normalize_time(meals['Date'])
+    meals['meal_type'] = meals['meal_type'].cat.codes
+
+    sample = {
+        'cgm': cgm.drop(columns='id').values,
+        'meals': meals.drop(columns='id').values,
+        'target': sample['target']
+    }
+
+    sample = {k: torch.tensor(v, dtype=torch.float) for k, v in sample.items()}
+    return sample

@@ -1,1 +1,1 @@
-from .transform import *
+from .transform import to_tensor
