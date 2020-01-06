@@ -26,3 +26,6 @@ for sample in val_dl:
 total = acc_pearson / amount
 print(f'{total:.2f} mean pearson correlation')
 print(f'{len(val) - amount}/{len(val)} were nans')
+
+# 0.06 mean pearson correlation
+# 115/156101 were nans

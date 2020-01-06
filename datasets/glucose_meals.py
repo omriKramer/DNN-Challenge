@@ -37,16 +37,20 @@ def cumsum_with_restarts(series, reset):
     return result
 
 
+def cleanup(cgm, meals):
+    cgm = filter_no_meals_data(cgm, meals)
+    meals['meal_type'] = meals['meal_type'].astype('category').cat.codes
+    meals['unit_id'] = meals['meal_type'].astype('category').cat.codes
+    meals = meals.fillna(value=0)
+    return cgm, meals
+
+
 class GlucoseData(Dataset):
 
     def __init__(self, cgm_df, meals_df, transform=None):
         self.transform = transform
 
-        self.cgm_df = cgm_df
-        self.meals_df = meals_df
-
-        self.cgm_df = filter_no_meals_data(self.cgm_df, self.meals_df)
-        self.meals_df['meal_type'] = self.meals_df['meal_type'].astype('category')
+        self.cgm_df, self.meals_df = cleanup(cgm_df, meals_df)
 
         indices = []
         for i, individual_cgm in self.cgm_df.groupby('id'):

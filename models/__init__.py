@@ -1,1 +1,2 @@
-from .Baselines import Mirror
+from .baselines import Mirror
+from .branch import BranchModel
