@@ -44,13 +44,12 @@ def to_tensor(sample):
 
     cgm['Date'] = normalize_time(cgm['Date'])
     meals['Date'] = normalize_time(meals['Date'])
-    meals['meal_type'] = meals['meal_type'].cat.codes
 
-    sample = {
-        'cgm': cgm.drop(columns='id').values,
+    new_sample = {
+        'cgm': cgm.drop(columns='id').values.T,
         'meals': meals.drop(columns='id').values,
         'target': sample['target']
     }
 
-    sample = {k: torch.tensor(v, dtype=torch.float) for k, v in sample.items()}
-    return sample
+    new_sample = {k: torch.tensor(v, dtype=torch.float) for k, v in new_sample.items()}
+    return new_sample
