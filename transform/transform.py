@@ -1,5 +1,10 @@
 import pandas as pd
 import torch
+import torch.nn.functional as F
+import numpy as np
+import warnings
+
+warnings.simplefilter(action='ignore', category='FutureWarning')
 
 
 def combine_cgm_meals(sample):
@@ -7,9 +12,7 @@ def combine_cgm_meals(sample):
     meals = sample['meals']
     target = sample['target']
 
-    meals.loc[meals.meal_type == 'meal', 'meal_type'] = 0
-    meals.loc[meals.meal_type == 'snack', 'meal_type'] = 1
-    meals.loc[meals.meal_type == 'drink', 'meal_type'] = 2
+
 
     df1 = cgm.set_index('Date')
     df2 = meals.set_index('Date')
@@ -17,8 +20,13 @@ def combine_cgm_meals(sample):
     df2['Mark'] = 1
     input_tens = pd.concat([df1, df2], axis=0, sort=True)
     input_tens = input_tens.fillna(0)
+    input_tens = input_tens.sort_index()
     input_tens = input_tens.iloc[1:, ].values
-    input_tens = torch.tensor(input_tens, dtype=torch.float64)
+    try:
+        input_tens = torch.tensor(input_tens, dtype=torch.float64)
+    except e:
+        a = 1
+    input_tens = F.pad(input_tens, pad=(0, 0, 0, 70-input_tens.shape[0]))
     target = torch.tensor(target, dtype=torch.float64)
     sample = {'input_tens': input_tens, 'target': target}
     return sample
