@@ -26,9 +26,10 @@ class BranchModel(nn.Module):
             nn.Linear(512, 8)
         )
 
-    def forward(self, cgm, meals):
-        meals = batch_meals(meals)
-        meals_features = self.meals_branch(meals)
+    def forward(self, cgm, meals_cont, meals_cat):
+        meals_cont = batch_meals(meals_cont)
+        meals_cat = batch_meals(meals_cat)
+        meals_features = self.meals_branch(meals_cont, meals_cat)
         cgm_features = self.cgm_branch(cgm)
         features = torch.cat((meals_features, cgm_features), dim=1)
         pred = self.head(features)
@@ -39,23 +40,31 @@ class MealsModel(nn.Module):
 
     def __init__(self):
         super().__init__()
+        self.food_emb = nn.Embedding(5830, 206)
+        self.unit_emb = nn.Embedding(90, 20)
+        self.meal_emb = nn.Embedding(5, 4)
         layers = []
-        last_dim = 40
-        for d in [128, 256, 512, 512]:
+        last_dim = 37 + 230
+        for d in [128, 256, 256]:
             layers.extend([nn.Linear(last_dim, d), nn.ReLU()])
             last_dim = d
-        self.body = nn.Sequential(*layers)
+        self.layers = nn.Sequential(*layers)
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 256))
+        self.max_pool = nn.AdaptiveMaxPool2d((1, 256))
 
-    def forward(self, x):
-        out = self.body(x)
-        out = out.mean(dim=1)
+    def forward(self, cont, cats):
+        x = cont, self.food_emb(cats[..., 0]), self.meal_emb(cats[..., 1]), self.unit_emb(cats[..., 2])
+        x = torch.cat(x, dim=-1)
+        out = self.layers(x)
+        out = torch.cat((self.avg_pool(out), self.max_pool(out)), dim=2)
+        out.squeeze_(dim=1)
         return out
 
 
 class CGMModel(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=(2, 3),)
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=(2, 3), )
         self.bn1 = nn.BatchNorm1d(64, 64)
         self.conv2 = nn.Conv1d(64, 128, kernel_size=3, stride=2)
         self.bn2 = nn.BatchNorm1d(128, 128)

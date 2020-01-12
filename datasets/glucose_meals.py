@@ -3,26 +3,17 @@ from datetime import timedelta
 
 import numpy as np
 import pandas as pd
+import torch
 from torch.utils.data.dataset import Dataset
 
 
-def split_by_individuals(cgm_file, meals_file, ratio=0.8):
-    cgm_df = pd.read_csv(cgm_file, parse_dates=['Date'])
-    meals_df = pd.read_csv(meals_file, parse_dates=['Date'])
-    cgm_df = filter_no_meals_data(cgm_df, meals_df)
-
+def split_by_individuals(cgm_df, ratio=0.8):
     individuals = cgm_df['id'].unique()
-    num_indiv = int(len(individuals) * ratio)
-    train_indiv = individuals[:num_indiv]
-    val_indiv = individuals[num_indiv:]
+    num_indiv = round(len(individuals) * ratio)
+    train_indiv = set(individuals[:num_indiv])
+    val_indiv = set(individuals[num_indiv:])
 
-    cgm_train = cgm_df[cgm_df['id'].isin(train_indiv)]
-    meals_train = meals_df[meals_df['id'].isin(train_indiv)]
-
-    cgm_val = cgm_df[cgm_df['id'].isin(val_indiv)]
-    meals_val = meals_df[meals_df['id'].isin(val_indiv)]
-
-    return (cgm_train, meals_train), (cgm_val, meals_val)
+    return train_indiv, val_indiv
 
 
 def filter_no_meals_data(cgm_df, meals_df):
@@ -37,20 +28,26 @@ def cumsum_with_restarts(series, reset):
     return result
 
 
-def cleanup(cgm, meals):
-    cgm = filter_no_meals_data(cgm, meals)
-    meals['meal_type'] = meals['meal_type'].astype('category').cat.codes
-    meals['unit_id'] = meals['meal_type'].astype('category').cat.codes
-    meals = meals.fillna(value=0)
-    return cgm, meals
+def normalize_columns(df, columns):
+    stats = df[columns].agg(['mean', 'std']).T
+    df = df.fillna(stats['mean'])
+    df.loc[:, columns] = df[columns].transform(lambda x: (x - x.mean()) / x.std())
+    return df, stats
 
 
 class GlucoseData(Dataset):
+    CATEGORICAL = 'food_id', 'meal_type', 'unit_id'
+
+    def _cleanup(self, cgm, meals_df):
+        cgm = filter_no_meals_data(cgm, meals_df)
+
+        cont_features = meals_df.columns.difference(('id', 'Date') + self.CATEGORICAL)
+        self.meals_df, self.meals_stats = normalize_columns(meals_df, cont_features)
+        self.cgm_df, self.cgm_stats = normalize_columns(cgm, ['GlucoseValue'])
 
     def __init__(self, cgm_df, meals_df, transform=None):
         self.transform = transform
-
-        self.cgm_df, self.meals_df = cleanup(cgm_df, meals_df)
+        self._cleanup(cgm_df, meals_df)
 
         indices = []
         for i, individual_cgm in self.cgm_df.groupby('id'):
@@ -73,15 +70,24 @@ class GlucoseData(Dataset):
     @classmethod
     def from_files(cls, cgm_file, meals_file, **kwargs):
         cgm_df = pd.read_csv(cgm_file, parse_dates=['Date'])
-        meals_df = pd.read_csv(meals_file, parse_dates=['Date'])
+        dt = dict.fromkeys(cls.CATEGORICAL, 'category')
+        meals_df = pd.read_csv(meals_file, parse_dates=['Date'], dtype=dt)
         glucose_data = cls(cgm_df, meals_df, **kwargs)
         return glucose_data
 
     @classmethod
     def train_val_split(cls, cgm_file, meals_file, **kwargs):
-        (cgm_train, meals_train), (cgm_val, meals_val) = split_by_individuals(cgm_file, meals_file)
-        train = cls(cgm_train, meals_train, **kwargs)
-        val = cls(cgm_val, meals_val, **kwargs)
+        glucose_data = cls.from_files(cgm_file, meals_file, **kwargs)
+        train_indv, val_indv = split_by_individuals(glucose_data.cgm_df)
+        train_idx, val_idx = [], []
+        for i, indx in enumerate(glucose_data.indices):
+            if glucose_data.cgm_df.at[indx, 'id'] in train_indv:
+                train_idx.append(i)
+            else:
+                val_idx.append(i)
+
+        train = torch.utils.data.Subset(glucose_data, train_idx)
+        val = torch.utils.data.Subset(glucose_data, val_idx)
         return train, val
 
     def __len__(self):
