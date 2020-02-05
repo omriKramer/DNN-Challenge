@@ -9,18 +9,28 @@
 #
 # Python 3.7
 ####################################################################################################
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
 import torch
-import tensorflow as tf
+from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import os
+import pickle
 import sys
 
 # The time series that you would get are such that the difference between two rows is 15 minutes.
 # This is a global number that we used to prepare the data, so you would need it for different purposes.
+from datasets import GlucoseData
+
 DATA_RESOLUTION_MIN = 15
+
+
+def normalize_time(series):
+    # 1440 minutes in a day
+    normalized = (series.hour * 60 + series.minute) / 1440
+    return normalized
 
 
 class Predictor(object):
@@ -32,6 +42,7 @@ class Predictor(object):
     The other functions are here just as an example for you to have something to start with, you may implement whatever
     you wish however you see fit.
     """
+    CATEGORICAL = 'food_id', 'meal_type', 'unit_id'
 
     def __init__(self, path2data):
         """
@@ -42,6 +53,12 @@ class Predictor(object):
         self.train_glucose = None
         self.train_meals = None
         self.nn = None
+        data_dir = Path(__file__).parent / 'data'
+        with (data_dir / 'norm_stats.pickle').open('rb') as f:
+            self.norm_stats = pickle.load(f)
+        with (data_dir / 'categories.pickle').open('rb') as f:
+            cat = pickle.load(f)
+            self.cat = {k: pd.api.types.CategoricalDtype(categories=v) for k,v in cat.items()}
 
     def predict(self, X_glucose, X_meals):
         """
@@ -65,6 +82,9 @@ class Predictor(object):
 
         # feed the network you trained (this for example would be a horrible prediction)
         y = pd.concat([X.mean(1) for i in range(8)], axis=1)
+
+        # unnormalize the prediction
+        y *= self.norm_param['glucose'][1] if self.norm_param else 93.19270255474244
         return y
 
     def define_nn(self):
@@ -82,7 +102,8 @@ class Predictor(object):
         :param y_train: A numpy ndarray, sized (M x 8) holding the values you need to predict.
         :return:
         """
-        pass
+        ds = GlucoseData(*X_train, y_train)
+        dl = DataLoader(ds)
 
     def save_nn_model(self):
         """
@@ -121,7 +142,7 @@ class Predictor(object):
         # 3. resample meals data to match glucose values intervals
         return
 
-    def build_features(self, X_glucose, X_meals, build_y=False, n_previous_time_points=48):
+    def build_features(self, X_glucose, X_meals: pd.DataFrame, build_y=False, n_previous_time_points=48):
         """
         Given glucose and meals data, build the features needed for prediction.
         :param X_glucose: A pandas data frame holding the glucose values.
@@ -130,17 +151,33 @@ class Predictor(object):
         :param n_previous_time_points:
         :return: The features needed for your prediction, and optionally also the relevant y arrays for training.
         """
+
+        self.normalize_column(X_glucose, 'GlucoseValue')
+        for col_name in X_meals.columns:
+            if col_name not in self.CATEGORICAL + ('id', 'date'):
+                self.normalize_column(X_meals, col_name)
+
         # using X_glucose and X_meals to build the features
         # for example just taking the last 2 hours of glucose values
         X = X_glucose.groupby('id').apply(Predictor.create_shifts, n_previous_time_points=n_previous_time_points)
+
+        X['time'] = normalize_time(X.index.get_level_values(2))
+        X_meals['time'] = normalize_time(X_meals.index.get_level_values(1))
+        for col_name in self.CATEGORICAL:
+            X_meals[col_name] = X_meals[col_name].astype(self.cat[col_name])
 
         # this implementation of extracting y is a valid one.
         if build_y:
             y = X_glucose.groupby('id').apply(Predictor.extract_y, n_future_time_points=8)
             X = X.loc[y.index].dropna(how='any', axis=0)
             y = y.loc[X.index].dropna(how='any', axis=0)
-            return X, y
-        return X
+            return (X, X_meals), y
+        return X, X_meals
+
+    def normalize_column(self, df, col_name):
+        mean, std = self.norm_stats[col_name]
+        df[col_name] = df[col_name].fillna(mean)
+        df[col_name] = ((df[col_name] - mean) / std)
 
     @staticmethod
     def create_shifts(df, n_previous_time_points=48):
@@ -150,8 +187,9 @@ class Predictor(object):
         :param n_previous_time_points: number of previous time points to shift
         :return:
         """
-        for g, i in zip(range(DATA_RESOLUTION_MIN, DATA_RESOLUTION_MIN*(n_previous_time_points+1), DATA_RESOLUTION_MIN),
-                        range(1, (n_previous_time_points+1), 1)):
+        for g, i in zip(
+                range(DATA_RESOLUTION_MIN, DATA_RESOLUTION_MIN * (n_previous_time_points + 1), DATA_RESOLUTION_MIN),
+                range(1, (n_previous_time_points + 1), 1)):
             df['GlucoseValue -%0.1dmin' % g] = df.GlucoseValue.shift(i)
         return df.dropna(how='any', axis=0)
 
@@ -162,16 +200,18 @@ class Predictor(object):
         :param n_future_time_points: number of future time points
         :return:
         """
-        for g, i in zip(range(DATA_RESOLUTION_MIN, DATA_RESOLUTION_MIN*(n_future_time_points+1), DATA_RESOLUTION_MIN),
-                        range(1, (n_future_time_points+1), 1)):
+        for g, i in zip(
+                range(DATA_RESOLUTION_MIN, DATA_RESOLUTION_MIN * (n_future_time_points + 1), DATA_RESOLUTION_MIN),
+                range(1, (n_future_time_points + 1), 1)):
             df['Glucose difference +%0.1dmin' % g] = df.GlucoseValue.shift(-i) - df.GlucoseValue
         return df.dropna(how='any', axis=0).drop('GlucoseValue', axis=1)
+
 
 if __name__ == "__main__":
     # example of predict() usage
 
     # create Predictor instance
-    path2data = "<some path to your training file>"
+    path2data = "data/"
     predictor = Predictor(path2data)
 
     # load the raw data
@@ -181,19 +221,21 @@ if __name__ == "__main__":
     X, y = predictor.build_features(X_glucose=predictor.train_glucose, X_meals=predictor.train_meals, build_y=True)
 
     # train your model (this you need to implement)
-    predictor.train_network(X, y)
+    predictor.train_nn(X, y)
 
     ### test your model ###
     path2test_data = "<some path to test data>"
 
     # load the testing data frames
-    glucose_test = Predictor.load_data_frame(os.path.join(path2test_data, 'GlucoseValues_test.csv'))
-    meals_test = Predictor.load_data_frame(os.path.join(path2test_data, 'Meals_test.csv'))
+    glucose_test = Predictor.load_data_frame(os.path.join(path2test_data, 'GlucoseValues_val.csv'))
+    meals_test = Predictor.load_data_frame(os.path.join(path2test_data, 'Meals_val.csv'))
 
+    _, y_gt = predictor.build_features(X_glucose=glucose_test, X_meals=meals_test, build_y=True)
+    y_gt *= predictor.norm_param['glucose'][1]
     # predict y
     y_pred = predictor.predict(X_glucose=glucose_test, X_meals=meals_test)
 
     # test the prediction (this is the mean absolute error for example)
-    score = np.mean(np.abs(y_pred - y))
+    score = np.mean(np.abs(y_pred - y_gt))
 
     print("Your score is: {}".format(score))

@@ -1,16 +1,8 @@
-from datasets import GlucoseData
+import pytest
 
 
-def test_datapoints_length(glucose_data):
-    past_instances = 4 * 12 + 1
-    future_instances = 8
-    for i in [0, 1404, -1]:
-        sample = glucose_data[i]
-        assert len(sample['cgm']) == past_instances
-        assert len(sample['target']) == future_instances, f'length of target {i} was {len(sample["target"])}'
-
-
-def test_split_by_individuals(cgm_file, meals_file):
-    train, val = GlucoseData.train_val_split(cgm_file, meals_file)
-    assert train
-    assert val
+@pytest.mark.parametrize("cat", ['food_id', 'meal_type', 'unit_id'])
+def test_split(train_data, val_data, cat):
+    _, train_meals = train_data
+    _, val_meals = val_data
+    assert val_meals[cat].isin(train_meals[cat].unique()).all()

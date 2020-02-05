@@ -1,26 +1,31 @@
+from pathlib import Path
+
+import pandas as pd
 import pytest
-from datasets import GlucoseData
 
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--cgm", default="../data/GlucoseValues.csv", help="path to glucose data file"
+        "--train", default="data/train", help="path to train dir"
     )
     parser.addoption(
-        "--meals", default="../data/Meals.csv", help="path to meals data file"
+        "--val", default="data/val", help="path to val dir"
     )
 
 
-@pytest.fixture(scope='session')
-def cgm_file(request):
-    return request.config.getoption('--cgm')
+def read_data(data_dir):
+    glucose_df = pd.read_csv(data_dir / 'GlucoseValues.csv', parse_dates=['Date'])
+    meals_df = pd.read_csv(data_dir / 'Meals.csv', parse_dates=['Date'])
+    return glucose_df, meals_df
 
 
 @pytest.fixture(scope='session')
-def meals_file(request):
-    return request.config.getoption('--meals')
+def train_data(request):
+    train_dir = Path(request.config.getoption('--train'))
+    return read_data(train_dir)
 
 
 @pytest.fixture(scope='session')
-def glucose_data(cgm_file, meals_file):
-    return GlucoseData.from_files(cgm_file, meals_file)
+def val_data(request):
+    val_dir = Path(request.config.getoption('--val'))
+    return read_data(val_dir)

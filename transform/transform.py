@@ -30,11 +30,6 @@ def combine_cgm_meals(sample):
     return sample
 
 
-def normalize_time(series):
-    # 1440 minutes in a day
-    normalized = (series.dt.hour * 60 + series.dt.minute) / 1440
-    return normalized
-
 
 def cat2int(series):
     return series.cat.codes + 1
