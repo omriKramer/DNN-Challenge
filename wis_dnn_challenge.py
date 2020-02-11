@@ -84,7 +84,7 @@ class Predictor(object):
         y = pd.concat([X.mean(1) for i in range(8)], axis=1)
 
         # unnormalize the prediction
-        y *= self.norm_param['glucose'][1] if self.norm_param else 93.19270255474244
+        y *= self.norm_stats['glucose'][1] if self.norm_param else 93.19270255474244
         return y
 
     def define_nn(self):
@@ -103,7 +103,9 @@ class Predictor(object):
         :return:
         """
         ds = GlucoseData(*X_train, y_train)
-        dl = DataLoader(ds)
+        for i in range(len(ds)):
+            item = ds[i]
+        pass
 
     def save_nn_model(self):
         """
@@ -152,17 +154,17 @@ class Predictor(object):
         :return: The features needed for your prediction, and optionally also the relevant y arrays for training.
         """
 
-        self.normalize_column(X_glucose, 'GlucoseValue')
-        for col_name in X_meals.columns:
-            if col_name not in self.CATEGORICAL + ('id', 'date'):
-                self.normalize_column(X_meals, col_name)
+        # self.normalize_column(X_glucose, 'GlucoseValue')
+        # for col_name in X_meals.columns:
+        #     if col_name not in self.CATEGORICAL + ('id', 'date'):
+        #         self.normalize_column(X_meals, col_name)
 
         # using X_glucose and X_meals to build the features
         # for example just taking the last 2 hours of glucose values
         X = X_glucose.groupby('id').apply(Predictor.create_shifts, n_previous_time_points=n_previous_time_points)
 
         X['time'] = normalize_time(X.index.get_level_values(2))
-        X_meals['time'] = normalize_time(X_meals.index.get_level_values(1))
+        # X_meals['time'] = normalize_time(X_meals.index.get_level_values(1))
         for col_name in self.CATEGORICAL:
             X_meals[col_name] = X_meals[col_name].astype(self.cat[col_name])
 
