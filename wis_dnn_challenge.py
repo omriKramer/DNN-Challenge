@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import os
 import pickle
+import models
 import sys
 
 # The time series that you would get are such that the difference between two rows is 15 minutes.
@@ -52,13 +53,13 @@ class Predictor(object):
         self.path2data = path2data
         self.train_glucose = None
         self.train_meals = None
-        self.nn = None
+        self.nn = models.Linear()
         data_dir = Path(__file__).parent / 'data'
         with (data_dir / 'norm_stats.pickle').open('rb') as f:
             self.norm_stats = pickle.load(f)
         with (data_dir / 'categories.pickle').open('rb') as f:
             cat = pickle.load(f)
-            self.cat = {k: pd.api.types.CategoricalDtype(categories=v) for k,v in cat.items()}
+            self.cat = {k: pd.api.types.CategoricalDtype(categories=v) for k, v in cat.items()}
 
     def predict(self, X_glucose, X_meals):
         """
@@ -84,7 +85,7 @@ class Predictor(object):
         y = pd.concat([X.mean(1) for i in range(8)], axis=1)
 
         # unnormalize the prediction
-        y *= self.norm_stats['glucose'][1] if self.norm_param else 93.19270255474244
+        y *= self.norm_stats['GlucoseValue'][1] if self.norm_param else 93.19270255474244
         return y
 
     def define_nn(self):
@@ -95,24 +96,65 @@ class Predictor(object):
         self.nn = None
         return
 
-    def train_nn(self, X_train, y_train):
+    def train_nn(self, X_train, y_train, X_val, y_val, epochs=5, lr=1e-2, wd=1e-2):
         """
         Train your network using the training data.
         :param X_train: A pandas data frame holding the features
         :param y_train: A numpy ndarray, sized (M x 8) holding the values you need to predict.
         :return:
         """
-        ds = GlucoseData(*X_train, y_train)
-        for i in range(len(ds)):
-            item = ds[i]
-        pass
+        device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        self.nn.to(device)
+        loss_fn = torch.nn.MSELoss()
+        mae_fn = torch.nn.L1Loss(reduction='sum')
+        glucose_std = self.norm_stats['GlucoseValue'][1]
 
-    def save_nn_model(self):
+        ds_kwargs = {'resample_rule': 60}
+        train = GlucoseData(*X_train, y_train, **ds_kwargs)
+        train_dl = DataLoader(train, batch_size=128, shuffle=True, num_workers=8)
+        val = GlucoseData(*X_val, y_val, **ds_kwargs)
+        val_dl = DataLoader(val, batch_size=128, num_workers=8)
+        opt = torch.optim.Adam(self.nn.parameters(), lr=lr, weight_decay=wd)
+        total_loss = 0.
+        print('starting training...')
+        for i in range(epochs):
+            for sample in train_dl:
+                sample = {k: v.to(device) for k, v in sample.items()}
+                out = self.nn(sample)
+                loss = loss_fn(out, sample['target'])
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                total_loss += loss.item() * len(sample['target'])
+
+            train_loss = total_loss / len(train)
+
+            total_loss, mae = 0., 0.
+            with torch.no_grad:
+                for sample in val_dl:
+                    sample = {k: v.to(device) for k, v in sample.items()}
+                    out = self.nn(sample)
+                    loss = loss_fn(out, sample['target'])
+                    total_loss += loss.item() * len(sample['target'])
+                    mae += mae_fn(out * glucose_std, sample['target'] * glucose_std)
+
+            val_loss = total_loss / len(val)
+            mae /= len(val)
+            msg = (f'{i} train loss: {train_loss:.2}, val loss {val_loss:.2}, '
+                   f'MAE: {mae:.2}, Mae/STD: {mae / glucose_std:.2}')
+            print(msg)
+            self.save_nn_model(i, opt)
+
+    def save_nn_model(self, epoch, opt):
         """
         Save your neural network after training.
         :return:
         """
-        pass
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': self.nn.state_dict(),
+            'optimizer_state_dict': opt.state_dict(),
+        }, f'checkpoint{epoch:02}.tar')
 
     def load_nn_model(self):
         """
@@ -155,9 +197,9 @@ class Predictor(object):
         """
 
         # self.normalize_column(X_glucose, 'GlucoseValue')
-        # for col_name in X_meals.columns:
-        #     if col_name not in self.CATEGORICAL + ('id', 'date'):
-        #         self.normalize_column(X_meals, col_name)
+        for col_name in X_meals.columns:
+            if col_name not in self.CATEGORICAL + ('id', 'date'):
+                self.normalize_column(X_meals, col_name)
 
         # using X_glucose and X_meals to build the features
         # for example just taking the last 2 hours of glucose values
@@ -177,9 +219,10 @@ class Predictor(object):
         return X, X_meals
 
     def normalize_column(self, df, col_name):
+        with_mean = False
         mean, std = self.norm_stats[col_name]
         df[col_name] = df[col_name].fillna(mean)
-        df[col_name] = ((df[col_name] - mean) / std)
+        df[col_name] = ((df[col_name] - mean * with_mean) / std)
 
     @staticmethod
     def create_shifts(df, n_previous_time_points=48):
@@ -209,11 +252,12 @@ class Predictor(object):
         return df.dropna(how='any', axis=0).drop('GlucoseValue', axis=1)
 
 
-if __name__ == "__main__":
+def main():
     # example of predict() usage
 
     # create Predictor instance
-    path2data = "data/"
+    path2data = "data/train"
+    path2val = "data/val"
     predictor = Predictor(path2data)
 
     # load the raw data
@@ -222,22 +266,24 @@ if __name__ == "__main__":
     # build X and y for training
     X, y = predictor.build_features(X_glucose=predictor.train_glucose, X_meals=predictor.train_meals, build_y=True)
 
+    # load validation data
+    glucose_val = Predictor.load_data_frame(os.path.join(path2val, 'GlucoseValues.csv'))
+    meals_val = Predictor.load_data_frame(os.path.join(path2val, 'Meals.csv'))
+    X_val, y_val = predictor.build_features(X_glucose=glucose_val, X_meals=meals_val, build_y=True)
+
     # train your model (this you need to implement)
-    predictor.train_nn(X, y)
+    predictor.train_nn(X, y, X_val, y_val)
 
-    ### test your model ###
-    path2test_data = "<some path to test data>"
 
-    # load the testing data frames
-    glucose_test = Predictor.load_data_frame(os.path.join(path2test_data, 'GlucoseValues_val.csv'))
-    meals_test = Predictor.load_data_frame(os.path.join(path2test_data, 'Meals_val.csv'))
+if __name__ == "__main__":
+    main()
 
-    _, y_gt = predictor.build_features(X_glucose=glucose_test, X_meals=meals_test, build_y=True)
-    y_gt *= predictor.norm_param['glucose'][1]
-    # predict y
-    y_pred = predictor.predict(X_glucose=glucose_test, X_meals=meals_test)
-
-    # test the prediction (this is the mean absolute error for example)
-    score = np.mean(np.abs(y_pred - y_gt))
-
-    print("Your score is: {}".format(score))
+    # _, y_gt = predictor.build_features(X_glucose=glucose_val, X_meals=meals_val, build_y=True)
+    # y_gt *= predictor.norm_param['glucose'][1]
+    # # predict y
+    # y_pred = predictor.predict(X_glucose=glucose_val, X_meals=meals_val)
+    #
+    # # test the prediction (this is the mean absolute error for example)
+    # score = np.mean(np.abs(y_pred - y_gt))
+    #
+    # print("Your score is: {}".format(score))
