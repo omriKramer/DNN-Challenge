@@ -130,7 +130,7 @@ class Predictor(object):
             train_loss = total_loss / len(train)
 
             total_loss, mae = 0., 0.
-            with torch.no_grad:
+            with torch.no_grad():
                 for sample in val_dl:
                     sample = {k: v.to(device) for k, v in sample.items()}
                     out = self.nn(sample)
