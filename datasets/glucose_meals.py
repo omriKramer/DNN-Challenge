@@ -44,6 +44,6 @@ class GlucoseData(Dataset):
                 .resample(rule, level='Date', base=base, label='right', closed='right')
                 .sum())
         sample['cont'] = cont.reindex(index, fill_value=0) if not cont.empty else pd.DataFrame(0, index, cont.columns)
-        sample['target'] = self.y.iloc[item]
+        target = torch.tensor(self.y.iloc[item], dtype=torch.float)
         sample = {k: torch.tensor(v.values, dtype=torch.float) for k, v in sample.items()}
-        return sample
+        return sample, target

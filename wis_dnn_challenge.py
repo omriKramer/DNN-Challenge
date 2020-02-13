@@ -9,18 +9,15 @@
 #
 # Python 3.7
 ####################################################################################################
+import os
+import pickle
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
-import os
-import pickle
-import models
-import sys
 
+import models
 # The time series that you would get are such that the difference between two rows is 15 minutes.
 # This is a global number that we used to prepare the data, so you would need it for different purposes.
 from datasets import GlucoseData
@@ -118,8 +115,9 @@ class Predictor(object):
         total_loss = 0.
         print('starting training...')
         for i in range(epochs):
-            for sample in train_dl:
+            for sample, target in train_dl:
                 sample = {k: v.to(device) for k, v in sample.items()}
+                target = target.to(device)
                 out = self.nn(sample)
                 loss = loss_fn(out, sample['target'])
                 opt.zero_grad()
@@ -131,10 +129,11 @@ class Predictor(object):
 
             total_loss, mae = 0., 0.
             with torch.no_grad():
-                for sample in val_dl:
+                for sample, target in val_dl:
                     sample = {k: v.to(device) for k, v in sample.items()}
+                    target = target.to(device)
                     out = self.nn(sample)
-                    loss = loss_fn(out, sample['target'])
+                    loss = loss_fn(out, target)
                     total_loss += loss.item() * len(sample['target'])
                     mae += mae_fn(out * glucose_std, sample['target'] * glucose_std)
 
