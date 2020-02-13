@@ -1,16 +1,16 @@
-import itertools
 from datetime import timedelta
 
-import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data.dataset import Dataset
 
 
 class GlucoseData(Dataset):
+    c = 8
     CATEGORICAL = ['food_id', 'meal_type', 'unit_id']
 
     def __init__(self, cgm_df, meals_df, y, resample_rule=15):
+        self.loss_func = torch.nn.MSELoss()
         self.cgm_df = cgm_df
         self.meals = meals_df.sort_index()
         self.y = y
