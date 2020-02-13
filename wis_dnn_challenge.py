@@ -119,11 +119,11 @@ class Predictor(object):
                 sample = {k: v.to(device) for k, v in sample.items()}
                 target = target.to(device)
                 out = self.nn(sample)
-                loss = loss_fn(out, sample['target'])
+                loss = loss_fn(out, target)
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
-                total_loss += loss.item() * len(sample['target'])
+                total_loss += loss.item() * len(target)
 
             train_loss = total_loss / len(train)
 
@@ -134,8 +134,8 @@ class Predictor(object):
                     target = target.to(device)
                     out = self.nn(sample)
                     loss = loss_fn(out, target)
-                    total_loss += loss.item() * len(sample['target'])
-                    mae += mae_fn(out * glucose_std, sample['target'] * glucose_std)
+                    total_loss += loss.item() * len(target)
+                    mae += mae_fn(out * glucose_std, target * glucose_std)
 
             val_loss = total_loss / len(val)
             mae /= len(val)
