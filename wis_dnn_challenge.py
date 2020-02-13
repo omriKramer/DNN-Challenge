@@ -195,7 +195,7 @@ class Predictor(object):
         :return: The features needed for your prediction, and optionally also the relevant y arrays for training.
         """
 
-        # self.normalize_column(X_glucose, 'GlucoseValue')
+        self.normalize_column(X_glucose, 'GlucoseValue')
         for col_name in X_meals.columns:
             if col_name not in self.CATEGORICAL + ('id', 'date'):
                 self.normalize_column(X_meals, col_name)
