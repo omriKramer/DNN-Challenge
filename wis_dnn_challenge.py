@@ -40,7 +40,6 @@ class Predictor(object):
     The other functions are here just as an example for you to have something to start with, you may implement whatever
     you wish however you see fit.
     """
-    CATEGORICAL = 'food_id', 'meal_type', 'unit_id'
 
     def __init__(self, path2data):
         """
@@ -51,12 +50,6 @@ class Predictor(object):
         self.train_glucose = None
         self.train_meals = None
         self.nn = models.Linear()
-        data_dir = Path(__file__).parent / 'data'
-        with (data_dir / 'norm_stats.pickle').open('rb') as f:
-            self.norm_stats = pickle.load(f)
-        with (data_dir / 'categories.pickle').open('rb') as f:
-            cat = pickle.load(f)
-            self.cat = {k: pd.api.types.CategoricalDtype(categories=v) for k, v in cat.items()}
 
     def predict(self, X_glucose, X_meals):
         """
@@ -195,10 +188,6 @@ class Predictor(object):
         :return: The features needed for your prediction, and optionally also the relevant y arrays for training.
         """
 
-        self.normalize_column(X_glucose, 'GlucoseValue')
-        for col_name in X_meals.columns:
-            if col_name not in self.CATEGORICAL + ('id', 'date'):
-                self.normalize_column(X_meals, col_name)
 
         # using X_glucose and X_meals to build the features
         # for example just taking the last 2 hours of glucose values
@@ -208,6 +197,10 @@ class Predictor(object):
         # X_meals['time'] = normalize_time(X_meals.index.get_level_values(1))
         for col_name in self.CATEGORICAL:
             X_meals[col_name] = X_meals[col_name].astype(self.cat[col_name])
+
+        X_meals.sort_index()
+        X_meals = pd.get_dummies(X_meals)
+        X_meals = X_meals.groupby('id').resample('15T', level='Date').sum()
 
         # this implementation of extracting y is a valid one.
         if build_y:
