@@ -68,8 +68,8 @@ def create_shifts(df, n_previous_time_points=48):
 
 
 def build_cgm(x_glucose):
-    X = x_glucose.groupby(level='id').apply(create_shifts)
-    y = x_glucose.groupby(level='id').apply(extract_y)
+    X = x_glucose.groupby(level='id').apply(create_shifts).reset_index(level=0, drop=True)
+    y = x_glucose.groupby(level='id').apply(extract_y).reset_index(level=0, drop=True)
     X = X.loc[y.index].dropna(how='any', axis=0)
     y = y.loc[X.index].dropna(how='any', axis=0)
     return X, y
