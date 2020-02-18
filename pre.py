@@ -75,8 +75,9 @@ def build_cgm(x_glucose):
     return X, y
 
 
-def get_cgm(path):
-    x_glucose = pd.read_csv(path, index_col=[0, 1], parse_dates=['Date']).sort_index()
-    normalize_column(x_glucose, 'GlucoseValue')
-    X, y = build_cgm(x_glucose)
-    return X, y
+def get_dfs(data_dir):
+    cgm = pd.read_csv(data_dir / 'GlucoseValues.csv', index_col=[0, 1], parse_dates=['Date']).sort_index()
+    meals = pd.read_csv(data_dir / 'Meals.csv', index_col=[0, 1], parse_dates=['Date']).sort_index()
+    preprocess(cgm, meals)
+    cgm, y = build_cgm(cgm)
+    return (cgm, meals), y
