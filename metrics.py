@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
-from fastai.callback import Callback
+from fastai import callback
 
 
 def compute_mean_pearson(y_true, y_pred, individual_index_name='id', n_future_time_points=8):
@@ -31,7 +31,7 @@ def compute_mean_pearson(y_true, y_pred, individual_index_name='id', n_future_ti
                                   x.iloc[:, n_future_time_points:].values.ravel())[0]).mean()
 
 
-class Pearson(Callback):
+class Pearson(callback.Callback):
     def __init__(self, gt):
         super().__init__()
         self.gt = gt
@@ -50,4 +50,5 @@ class Pearson(Callback):
 
     def on_epoch_end(self, last_metrics, **kwargs):
         pred = pd.DataFrame(index=self.gt.index, columns=self.gt.columns, data=self.pred)
-        return compute_mean_pearson(self.gt, pred)
+        corr = compute_mean_pearson(self.gt, pred)
+        return callback.add_metrics(last_metrics, corr)
