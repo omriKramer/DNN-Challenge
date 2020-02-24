@@ -33,4 +33,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)
     parser.add_argument('--freq', '-f', default=15)
+    parser.add_argument('--dummies', action='store_true')
     main(parser.parse_args())
