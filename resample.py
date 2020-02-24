@@ -5,10 +5,12 @@ import pandas as pd
 from pre import preprocess
 
 
-def resample_meals(cgm: pd.DataFrame, meals: pd.DataFrame, freq: int) -> pd.DataFrame:
+def resample_meals(cgm: pd.DataFrame, meals: pd.DataFrame, freq: int, dummies=False) -> pd.DataFrame:
     resampled, ids = [], []
     for name, group in meals.groupby('id'):
         base = cgm.loc[name, 'GlucoseValue'].index.minute.min()
+        if dummies:
+            group = pd.get_dummies(group, dummy_na=True)
         group = group.resample(f'{freq}T', level='Date', base=base, closed='right', label='right').sum()
         resampled.append(group.reindex(cgm.loc[name].index, fill_value=0.))
         ids.append(name)
