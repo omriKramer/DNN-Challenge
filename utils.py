@@ -1,6 +1,10 @@
 import argparse
 
-import torch
+import fastai
+import fastprogress
+from fastprogress.fastprogress import force_console_behavior
+
+master_bar, progress_bar = fastai.core.master_bar, fastai.core.progress_bar
 
 
 def get_files():
@@ -11,11 +15,19 @@ def get_files():
     return args.cgm, args.meals
 
 
-def collate(samples):
-    batched = {
-        'cgm': torch.stack([s['cgm'] for s in samples]),
-        'meals_cont': [s['meals_cont'] for s in samples],
-        'meals_cat': [s['meals_cat'] for s in samples],
-        'target': torch.stack([s['target'] for s in samples])
-    }
-    return batched
+class ProgressBarCtx:
+    """Context manager to disable the progress update bar."""
+
+    def __init__(self, learn, show=True):
+        self.learn = learn
+        self.show = show
+
+    def __enter__(self):
+        if not self.show:
+            # silence progress bar
+            fastprogress.fastprogress.NO_BAR = True
+            fastai.basic_train.master_bar, fastai.basic_train.progress_bar = force_console_behavior()
+        return self.learn
+
+    def __exit__(self, *args):
+        fastai.basic_train.master_bar, fastai.basic_train.progress_bar = master_bar, progress_bar
