@@ -2,6 +2,7 @@ from fastai.vision import *
 import pre
 import resample
 from metrics import Pearson
+import argparse
 
 root = Path(__file__).resolve().parent / 'data'
 train = root / 'train'
@@ -144,5 +145,9 @@ model = Seq2Seq(38, 128)
 metrics = [mean_absolute_error, Pearson(val_ds.y)]
 learner = Learner(data, model, loss_func=nn.MSELoss(), metrics=metrics)
 
+parser = argparse.ArgumentParser()
+parser.add_argument('-e', '--epochs', default=5, type=int)
+args = parser.parse_args()
+
 save = callbacks.SaveModelCallback(learner, monitor='pearson')
-learner.fit_one_cycle(5, 1e-3, callbacks=save)
+learner.fit_one_cycle(args.epochs, 1e-3, callbacks=save)
