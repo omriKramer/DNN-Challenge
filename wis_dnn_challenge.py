@@ -3,7 +3,6 @@ import pre
 import resample
 
 import os
-import sys
 
 # The time series that you would get are such that the difference between two rows is 15 minutes.
 # This is a global number that we used to prepare the data, so you would need it for different purposes.
