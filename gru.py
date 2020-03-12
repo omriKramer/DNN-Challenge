@@ -141,13 +141,29 @@ class Seq2Seq(Module):
         return out
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument('-e', '--epochs', default=5, type=int)
+parser.add_argument('--trainval', action='store_true')
+args = parser.parse_args()
+
+if args.trainval:
+    train_data = get_data(root)
+else:
+    train_data = get_data(train)
+
+val_data = get_data(val)
+
+train_ds = ContData(*train_data)
+val_ds = ContData(*val_data)
+data = DataBunch.create(train_ds, val_ds, bs=512)
+
 model = Seq2Seq(38, 128)
 metrics = [mean_absolute_error, Pearson(val_ds.y)]
 learner = Learner(data, model, loss_func=nn.MSELoss(), metrics=metrics)
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-e', '--epochs', default=5, type=int)
-args = parser.parse_args()
-
-save = callbacks.SaveModelCallback(learner, monitor='pearson')
-learner.fit_one_cycle(args.epochs, 1e-3, callbacks=save)
+if args.trainval:
+    learner.fit_one_cycle(args.epochs, 1e-3)
+    learner.save('gru-trainval')
+else:
+    save = callbacks.SaveModelCallback(learner, monitor='pearson')
+    learner.fit_one_cycle(args.epochs, 1e-3, callbacks=save)
