@@ -7,7 +7,7 @@ import pandas as pd
 CATEGORICAL = ['food_id', 'meal_type', 'unit_id']
 DATA_RESOLUTION_MIN = 15
 
-_data_dir = Path(__file__).parent / 'data'
+_data_dir = Path(__file__).parent / 'our_data'
 
 with (_data_dir / 'norm_stats.pickle').open('rb') as f:
     norm_stats = pickle.load(f)
