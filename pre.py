@@ -68,12 +68,17 @@ def create_shifts(df, n_previous_time_points=48):
     return df.dropna(how='any', axis=0)
 
 
-def build_cgm(x_glucose, drop=True):
-    X = x_glucose.groupby(level='id').apply(create_shifts).reset_index(level=0, drop=True)
-    y = x_glucose.groupby(level='id').apply(extract_y).reset_index(level=0, drop=True)
+def build_cgm(X_glucose, drop=True):
+    # using X_glucose and X_meals to build the features
+    # get the past 48 time points of the glucose
+    X = X_glucose.reset_index().groupby('id').apply(create_shifts, ).set_index(['id', 'Date'])
+
+    # this implementation of extracting y is a valid one.
+    y = X_glucose.reset_index().groupby('id').apply(extract_y).set_index(['id', 'Date'])
     if drop:
-        X = X.loc[y.index].dropna(how='any', axis=0)
-        y = y.loc[X.index].dropna(how='any', axis=0)
+        index_intersection = X.index.intersection(y.index)
+        X = X.loc[index_intersection]
+        y = y.loc[index_intersection]
     return X, y
 
 

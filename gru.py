@@ -45,14 +45,6 @@ class ContData(Dataset):
         return x, y
 
 
-train_data = get_data(train)
-val_data = get_data(val)
-
-train_ds = ContData(*train_data)
-val_ds = ContData(*val_data)
-data = DataBunch.create(train_ds, val_ds, bs=512)
-
-
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size):
         super(EncoderRNN, self).__init__()
