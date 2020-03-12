@@ -87,6 +87,8 @@ def get_dfs(data_dir, normalize=True):
 
 
 def filter_no_meals_data(cgm_df, meals_df):
-    removal_patients = np.setdiff1d(cgm_df['id'].unique(), meals_df['id'].unique(), assume_unique=True)
-    cgm_df = cgm_df[~cgm_df['id'].isin(removal_patients)]
+    cgm_patients = cgm_df.index.get_level_values('id').unique()
+    meals_patients = meals_df.index.get_level_values('id').unique()
+    removal_patients = np.setdiff1d(cgm_patients, meals_patients, assume_unique=True)
+    cgm_df = cgm_df.drop(index=removal_patients, level='id')
     return cgm_df
