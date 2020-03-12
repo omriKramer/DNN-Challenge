@@ -196,7 +196,7 @@ class Predictor(object):
                  Every row in your final ndarray should correspond to:
                  (glucose[t+15min]-glucose[t], glucose[t+30min]-glucose[t], ..., glucose[t+120min]-glucose[t])
         """
-        y_true_index = predictor.build_features(X_glucose, None)[1].index
+        y_true_index = self.build_features(X_glucose, None)[1].index
         cgm, meals = X_glucose.sort_index(), X_meals.sort_index()
         pre.preprocess(cgm, meals)
         test_data = build_features(cgm, meals)
