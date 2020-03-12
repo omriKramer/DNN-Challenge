@@ -1,27 +1,12 @@
-####################################################################################################
-# wis_dnn_challenge.py
-# Description: This is a template file for the WIS DNN challenge submission.
-# Important: The only thing you should not change is the signature of the class (Predictor) and its predict function.
-#            Anything else is for you to decide how to implement.
-#            We provide you with a very basic working version of this class.
-#
-# Author: <first name1>_<last name1> [<first name1>_<last name2>]
-#
-# Python 3.7
-####################################################################################################
+from fastai.vision import *
+import pre
+import resample
+
 import os
-import pickle
-from pathlib import Path
+import sys
 
-import pandas as pd
-import torch
-from torch.utils.data import DataLoader
-
-import models
 # The time series that you would get are such that the difference between two rows is 15 minutes.
 # This is a global number that we used to prepare the data, so you would need it for different purposes.
-from datasets import GlucoseData
-
 DATA_RESOLUTION_MIN = 15
 
 
@@ -29,6 +14,142 @@ def normalize_time(series):
     # 1440 minutes in a day
     normalized = (series.hour * 60 + series.minute) / 1440
     return normalized
+
+
+def build_features(cgm, meals):
+    meals = resample.resample_meals(cgm, meals, 15)
+    meals = pd.concat((meals, cgm), axis=1)
+    meals['time'] = normalize_time(meals.index.get_level_values('Date'))
+    cgm, y = pre.build_cgm(cgm)
+    return cgm, meals, y
+
+
+def get_data(data_dir):
+    cgm, meals = pre.get_dfs(data_dir)
+    return build_features(cgm, meals)
+
+
+class ContData(Dataset):
+    def __init__(self, cgm, meals, y):
+        self.cgm = cgm
+        self.meals = meals
+        self.y = y
+
+    def __len__(self):
+        return len(self.cgm)
+
+    def __getitem__(self, i):
+        index = self.meals.index.get_loc(self.cgm.index[i])
+        values = self.meals[index - 48:index + 1].values
+        target = self.y.iloc[i].values
+        x, y = torch.tensor(values, dtype=torch.float), torch.tensor(target, dtype=torch.float)
+        return x, y
+
+
+class EncoderRNN(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(EncoderRNN, self).__init__()
+        self.hidden_size = hidden_size
+
+        self.embedding = nn.Linear(input_size, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size)
+
+    def forward(self, input, hidden):
+        embedded = self.embedding(input)
+        output = embedded
+        output, hidden = self.gru(output[None], hidden)
+        return output[0], hidden
+
+    def initHidden(self, bs, device):
+        return torch.zeros(1, bs, self.hidden_size, device=device)
+
+
+MAX_LENGTH = 49
+
+
+class AttnDecoderRNN(nn.Module):
+    def __init__(self, hidden_size, output_size=1, dropout_p=0.1, max_length=MAX_LENGTH):
+        super(AttnDecoderRNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.dropout_p = dropout_p
+        self.max_length = max_length
+
+        self.embedding = nn.Linear(self.output_size, self.hidden_size)
+        self.attn = nn.Linear(self.hidden_size * 2, self.max_length)
+        self.attn_combine = nn.Linear(self.hidden_size * 2, self.hidden_size)
+        self.dropout = nn.Dropout(self.dropout_p)
+        self.gru = nn.GRU(self.hidden_size, self.hidden_size)
+        self.out = nn.Linear(self.hidden_size, self.output_size)
+
+    def forward(self, input, hidden, encoder_outputs):
+        embedded = self.embedding(input)
+        embedded = self.dropout(embedded)
+
+        attn_weights = F.softmax(self.attn(torch.cat((embedded, hidden[0]), 1)), dim=1)
+        attn_applied = torch.bmm(attn_weights[:, None], encoder_outputs)
+
+        output = torch.cat((embedded, attn_applied[:, 0]), 1)
+        output = self.attn_combine(output)
+
+        output = F.relu(output)
+        output, hidden = self.gru(output[None], hidden)
+
+        output = self.out(output[0])
+        return output, hidden, attn_weights
+
+    def initHidden(self, bs, device):
+        return torch.zeros(1, bs, self.hidden_size, device=device)
+
+
+class Seq2Seq(Module):
+    def __init__(self, input_size, hidden_size):
+        super().__init__()
+        self.encoder = EncoderRNN(input_size, hidden_size)
+        self.decoder = AttnDecoderRNN(hidden_size)
+
+    def forward(self, input):
+        device = input.device
+        bs = input.shape[0]
+        input = input.transpose(0, 1)
+
+        encoder_hidden = self.encoder.initHidden(bs, device)
+        encoder_outputs = input.new_zeros(bs, MAX_LENGTH, self.encoder.hidden_size)
+
+        for ei in range(input.shape[0]):
+            encoder_output, encoder_hidden = self.encoder(input[ei], encoder_hidden)
+            encoder_outputs[:, ei] = encoder_output
+
+        decoder_input = input.new_zeros(bs, 1)
+        decoder_hidden = encoder_hidden
+
+        out = []
+        for di in range(8):
+            decoder_output, decoder_hidden, decoder_attention = self.decoder(
+                decoder_input, decoder_hidden, encoder_outputs)
+            out.append(decoder_output)
+            decoder_input = decoder_output.detach()
+
+        out = torch.cat(out, dim=1)
+        return out
+
+
+class PredClbk(Callback):
+
+    def __init__(self, length):
+        super().__init__()
+        self.pred = np.empty((length, 8))
+        self.start = 0
+
+    def on_batch_end(self, last_output, last_target, **kwargs):
+        values = last_output.cpu().numpy()
+        end = self.start + len(values)
+        self.pred[self.start:end] = values
+        self.start = end
+
+
+root = Path(__file__).resolve().parent / 'data'
+val = root / 'val'
 
 
 class Predictor(object):
@@ -41,15 +162,24 @@ class Predictor(object):
     you wish however you see fit.
     """
 
-    def __init__(self, path2data):
+    def __init__(self, path2data=''):
         """
         This constructor only gets the path to a folder where the training data frames are.
         :param path2data: a folder with your training data.
         """
         self.path2data = path2data
-        self.train_glucose = None
-        self.train_meals = None
-        self.nn = models.Linear()
+
+        train_data = get_data(root)
+        val_data = get_data(val)
+
+        train_ds = ContData(*train_data)
+        val_ds = ContData(*val_data)
+        data = DataBunch.create(train_ds, val_ds, bs=512)
+
+        model = Seq2Seq(38, 128)
+        self.learner = Learner(data, model, loss_func=nn.MSELoss())
+        self.learner.path = root.parent
+        self.learner.load('gru-trainval')
 
     def predict(self, X_glucose, X_meals):
         """
@@ -67,93 +197,22 @@ class Predictor(object):
                  Every row in your final ndarray should correspond to:
                  (glucose[t+15min]-glucose[t], glucose[t+30min]-glucose[t], ..., glucose[t+120min]-glucose[t])
         """
+        y_true_index = predictor.build_features(X_glucose, None)[1].index
+        cgm, meals = X_glucose.sort_index(), X_meals.sort_index()
+        pre.preprocess(cgm, meals)
+        test_data = build_features(cgm, meals)
+        test_ds = ContData(*test_data)
+        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        test_dl = DeviceDataLoader(DataLoader(test_ds, batch_size=128, shuffle=False), device)
 
-        # build features for set of (ID, timestamp)
-        X = self.build_features(X_glucose, X_meals)
+        gt = test_data[2]
+        clbk = PredClbk(len(gt))
+        self.learner.validate(test_dl, callbacks=[clbk])
 
-        # feed the network you trained (this for example would be a horrible prediction)
-        y = pd.concat([X.mean(1) for i in range(8)], axis=1)
-
-        # unnormalize the prediction
-        y *= self.norm_stats['GlucoseValue'][1] if self.norm_param else 93.19270255474244
+        pred = clbk.pred * pre.norm_stats['GlucoseValue'][1]
+        y = pd.DataFrame(index=gt.index, columns=gt.columns, data=pred)
+        y = y.loc[y_true_index]
         return y
-
-    def define_nn(self):
-        """
-        Define your neural network.
-        :return: None
-        """
-        self.nn = None
-        return
-
-    def train_nn(self, X_train, y_train, X_val, y_val, epochs=5, lr=1e-2, wd=1e-2):
-        """
-        Train your network using the training data.
-        :param X_train: A pandas data frame holding the features
-        :param y_train: A numpy ndarray, sized (M x 8) holding the values you need to predict.
-        :return:
-        """
-        device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        self.nn.to(device)
-        loss_fn = torch.nn.MSELoss()
-        mae_fn = torch.nn.L1Loss(reduction='sum')
-        glucose_std = self.norm_stats['GlucoseValue'][1]
-
-        ds_kwargs = {'resample_rule': 60}
-        train = GlucoseData(*X_train, y_train, **ds_kwargs)
-        train_dl = DataLoader(train, batch_size=128, shuffle=True, num_workers=8)
-        val = GlucoseData(*X_val, y_val, **ds_kwargs)
-        val_dl = DataLoader(val, batch_size=128, num_workers=8)
-        opt = torch.optim.Adam(self.nn.parameters(), lr=lr, weight_decay=wd)
-        total_loss = 0.
-        print('starting training...')
-        for i in range(epochs):
-            for sample, target in train_dl:
-                sample = {k: v.to(device) for k, v in sample.items()}
-                target = target.to(device)
-                out = self.nn(sample)
-                loss = loss_fn(out, target)
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-                total_loss += loss.item() * len(target)
-
-            train_loss = total_loss / len(train)
-
-            total_loss, mae = 0., 0.
-            with torch.no_grad():
-                for sample, target in val_dl:
-                    sample = {k: v.to(device) for k, v in sample.items()}
-                    target = target.to(device)
-                    out = self.nn(sample)
-                    loss = loss_fn(out, target)
-                    total_loss += loss.item() * len(target)
-                    mae += mae_fn(out * glucose_std, target * glucose_std)
-
-            val_loss = total_loss / len(val)
-            mae /= len(val)
-            msg = (f'{i} train loss: {train_loss:.2}, val loss {val_loss:.2}, '
-                   f'MAE: {mae:.2}, Mae/STD: {mae / glucose_std:.2}')
-            print(msg)
-            self.save_nn_model(i, opt)
-
-    def save_nn_model(self, epoch, opt):
-        """
-        Save your neural network after training.
-        :return:
-        """
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': self.nn.state_dict(),
-            'optimizer_state_dict': opt.state_dict(),
-        }, f'checkpoint{epoch:02}.tar')
-
-    def load_nn_model(self):
-        """
-        Load your trained neural network.
-        :return:
-        """
-        pass
 
     @staticmethod
     def load_data_frame(path):
@@ -178,44 +237,30 @@ class Predictor(object):
         # 3. resample meals data to match glucose values intervals
         return
 
-
-    def build_features(self, X_glucose, X_meals: pd.DataFrame, build_y=False, n_previous_time_points=48):
+    def build_features(self, X_glucose, X_meals, n_previous_time_points=48, n_future_time_points=8):
         """
         Given glucose and meals data, build the features needed for prediction.
         :param X_glucose: A pandas data frame holding the glucose values.
         :param X_meals: A pandas data frame holding the meals data.
-        :param build_y: Whether to also extract the values needed for prediction.
         :param n_previous_time_points:
+        :param n_future_time_points:
         :return: The features needed for your prediction, and optionally also the relevant y arrays for training.
         """
-
-
         # using X_glucose and X_meals to build the features
-        # for example just taking the last 2 hours of glucose values
-        X = X_glucose.groupby('id').apply(Predictor.create_shifts, n_previous_time_points=n_previous_time_points)
-
-        X['time'] = normalize_time(X.index.get_level_values(2))
-        # X_meals['time'] = normalize_time(X_meals.index.get_level_values(1))
-        for col_name in self.CATEGORICAL:
-            X_meals[col_name] = X_meals[col_name].astype(self.cat[col_name])
-
-        X_meals.sort_index()
-        X_meals = pd.get_dummies(X_meals)
-        X_meals = X_meals.groupby('id').resample('15T', level='Date').sum()
+        # get the past 48 time points of the glucose
+        X = X_glucose.reset_index().groupby('id').apply(Predictor.create_shifts,
+                                                        n_previous_time_points=n_previous_time_points).set_index(
+            ['id', 'Date'])
+        # use the meals data...
 
         # this implementation of extracting y is a valid one.
-        if build_y:
-            y = X_glucose.groupby('id').apply(Predictor.extract_y, n_future_time_points=8)
-            X = X.loc[y.index].dropna(how='any', axis=0)
-            y = y.loc[X.index].dropna(how='any', axis=0)
-            return (X, X_meals), y
-        return X, X_meals
-
-    def normalize_column(self, df, col_name):
-        with_mean = False
-        mean, std = self.norm_stats[col_name]
-        df[col_name] = df[col_name].fillna(mean)
-        df[col_name] = ((df[col_name] - mean * with_mean) / std)
+        y = X_glucose.reset_index().groupby('id').apply(Predictor.extract_y,
+                                                        n_future_time_points=n_future_time_points).set_index(
+            ['id', 'Date'])
+        index_intersection = X.index.intersection(y.index)
+        X = X.loc[index_intersection]
+        y = y.loc[index_intersection]
+        return X, y
 
     @staticmethod
     def create_shifts(df, n_previous_time_points=48):
@@ -245,38 +290,48 @@ class Predictor(object):
         return df.dropna(how='any', axis=0).drop('GlucoseValue', axis=1)
 
 
-def main():
-    # example of predict() usage
-
-    # create Predictor instance
-    path2data = "data/train"
-    path2val = "data/val"
-    predictor = Predictor(path2data)
-
-    # load the raw data
-    predictor.load_raw_data()
-
-    # build X and y for training
-    X, y = predictor.build_features(X_glucose=predictor.train_glucose, X_meals=predictor.train_meals, build_y=True)
-
-    # load validation data
-    glucose_val = Predictor.load_data_frame(os.path.join(path2val, 'GlucoseValues.csv'))
-    meals_val = Predictor.load_data_frame(os.path.join(path2val, 'Meals.csv'))
-    X_val, y_val = predictor.build_features(X_glucose=glucose_val, X_meals=meals_val, build_y=True)
-
-    # train your model (this you need to implement)
-    predictor.train_nn(X, y, X_val, y_val)
+if __name__ == '__main__':
+    import numpy as np
+    import pandas as pd
+    from scipy.stats import pearsonr
 
 
-if __name__ == "__main__":
-    main()
+    def compute_mean_pearson(y_true, y_pred, individual_index_name='id', n_future_time_points=8):
+        """
+        This function takes the true glucose values and the predicted ones, flattens the data per individual and then
+        computed the Pearson correlation between the two vectors per individual.
 
-    # _, y_gt = predictor.build_features(X_glucose=glucose_val, X_meals=meals_val, build_y=True)
-    # y_gt *= predictor.norm_param['glucose'][1]
-    # # predict y
-    # y_pred = predictor.predict(X_glucose=glucose_val, X_meals=meals_val)
-    #
-    # # test the prediction (this is the mean absolute error for example)
-    # score = np.mean(np.abs(y_pred - y_gt))
-    #
-    # print("Your score is: {}".format(score))
+        **This is how we will evaluate your predictions, you may use this function in your code**
+
+        :param y_true: an M by n_future_time_points data frame holding the true glucose values
+        :param y_pred: an M by n_future_time_points data frame holding the predicted glucose values
+        :param individual_index_name: the name of the individual's indeces, default is 'id'
+        :param n_future_time_points: number of future time points to predict, default is 8
+        :return: the mean Pearson correlation
+        """
+        # making sure y_true and y_pred are of the same size
+        assert y_true.shape == y_pred.shape
+        # making sure y_true and y_pred share the same exact indeces and index names
+        assert (y_true.index == y_pred.index).all() and y_true.index.names == y_pred.index.names
+        # making sure that individual_index_name is a part of the index of both dataframes
+        assert individual_index_name in y_true.index.names and individual_index_name in y_pred.index.names
+
+        # concat data frames
+        joined_df = pd.concat((y_true, y_pred), axis=1)
+        return joined_df.groupby(individual_index_name) \
+            .apply(lambda x: pearsonr(x.iloc[:, :n_future_time_points].values.ravel(),
+                                      x.iloc[:, n_future_time_points:].values.ravel())[0]).mean()
+
+
+    # creating a Predictor instance
+    predictor = Predictor()
+    # load the GlucoseValues that you got for training
+    X_glucose = Predictor.load_data_frame(val / 'GlucoseValues.csv')
+    X, y_true = predictor.build_features(X_glucose, None)
+    print('shape of X:', X.shape)
+    print('shape of y_true:', y_true.shape)
+
+    X_meals = Predictor.load_data_frame(val / 'Meals.csv')
+    y_pred = predictor.predict(X_glucose, X_meals)
+    assert (y_true.index == y_pred.index).all() and y_true.index.names == y_pred.index.names
+    compute_mean_pearson(y_true, y_pred)
