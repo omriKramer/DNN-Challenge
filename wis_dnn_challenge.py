@@ -147,7 +147,7 @@ class PredClbk(Callback):
         self.start = end
 
 
-root = Path(__file__).resolve().parent / 'data'
+root = Path(__file__).resolve().parent / 'our_data'
 val = root / 'val'
 
 
