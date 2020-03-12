@@ -1,6 +1,7 @@
 import pickle
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 CATEGORICAL = ['food_id', 'meal_type', 'unit_id']
@@ -79,6 +80,13 @@ def build_cgm(x_glucose, drop=True):
 def get_dfs(data_dir, normalize=True):
     cgm = pd.read_csv(data_dir / 'GlucoseValues.csv', index_col=[0, 1], parse_dates=['Date']).sort_index()
     meals = pd.read_csv(data_dir / 'Meals.csv', index_col=[0, 1], parse_dates=['Date']).sort_index()
+    cgm = filter_no_meals_data(cgm, meals)
     if normalize:
         preprocess(cgm, meals)
     return cgm, meals
+
+
+def filter_no_meals_data(cgm_df, meals_df):
+    removal_patients = np.setdiff1d(cgm_df['id'].unique(), meals_df['id'].unique(), assume_unique=True)
+    cgm_df = cgm_df[~cgm_df['id'].isin(removal_patients)]
+    return cgm_df

@@ -178,6 +178,7 @@ class Predictor(object):
         # 3. resample meals data to match glucose values intervals
         return
 
+
     def build_features(self, X_glucose, X_meals: pd.DataFrame, build_y=False, n_previous_time_points=48):
         """
         Given glucose and meals data, build the features needed for prediction.
