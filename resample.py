@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from pre import preprocess
@@ -14,6 +15,14 @@ def resample_meals(cgm: pd.DataFrame, meals: pd.DataFrame, freq: int, dummies=Fa
         group = group.resample(f'{freq}T', level='Date', base=base, closed='right', label='right').sum()
         resampled.append(group.reindex(cgm.loc[name].index, fill_value=0.))
         ids.append(name)
+
+    # add zero DataFrames if no meals data
+    no_meals = np.setdiff1d(cgm.index.unique(level='id'),  meals.index.unique(level='id'))
+    columns = resampled[0].columns
+    for name in no_meals:
+        resampled.append(pd.DataFrame(0., index=cgm.loc[name].index, columns=columns))
+        ids.append(name)
+
     resampled = pd.concat(resampled, keys=ids, names=['id'])
     return resampled
 
